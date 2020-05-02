@@ -81,9 +81,11 @@ class PretrainingModel(object):
       discriminator = self._build_transformer(
           fake_data.inputs, is_training, reuse=not config.untied_generator,
           embedding_size=embedding_size)
+      mlm_output = self._get_masked_lm_output(masked_inputs, discriminator)
       disc_output = self._get_discriminator_output(
           fake_data.inputs, discriminator, fake_data.is_fake_tokens)
       self.total_loss += config.disc_weight * disc_output.loss
+      self.total_loss += config.disc_weight * mlm_output.loss
 
     # Evaluation
     eval_fn_inputs = {
@@ -173,8 +175,14 @@ class PretrainingModel(object):
           dtype=tf.float32)
 
       probs = tf.nn.softmax(logits)
+      topk = tf.nn.topk(probs, 4)
+      sum_probs = tf.nn.reduce_sum(topk, axis=-1)
+      threshold_p = 0.6
+      mask = tf.nn.where(tf.greater(sum_probs, threshold_p))
+      probs = probs*mask
+      logits = logits*mask
       log_probs = tf.nn.log_softmax(logits)
-      label_log_probs = -tf.reduce_sum(log_probs * oh_labels, axis=-1)
+      label_log_probs = -tf.reduce_sum(log_probs * (oh_labels*mask), axis=-1)
 
       numerator = tf.reduce_sum(inputs.masked_lm_weights * label_log_probs)
       denominator = tf.reduce_sum(masked_lm_weights) + 1e-6
